@@ -24,13 +24,23 @@ const sepoliaChainID = 11155111
 func main() {
 	loadEnv(".env")
 
-	mode := flag.String("mode", "query", "operation mode: query or send")
+	mode := flag.String("mode", "query", "operation mode: query, send, or counter")
 	blockNumber := flag.String("block", "", "Sepolia block number to query (required for query mode)")
 	txTo := flag.String("to", "", "recipient address for send mode")
 	txAmount := flag.String("amount", "0.01", "amount in ETH for send mode")
-	txPrivateKey := flag.String("private-key", "", "sender private key hex for send mode")
+	txPrivateKey := flag.String("private-key", "", "sender private key hex (required for send and counter modes)")
 	rpcURL := flag.String("endpoint", "", "RPC endpoint; defaults to Sepolia Infura via INFURA_API_KEY env")
+	counterAction := flag.String("action", "get", "counter action: deploy, get, or inc")
+	counterContract := flag.String("contract", "", "counter contract address (required for get and inc actions)")
 	flag.Parse()
+
+	privateKey := *txPrivateKey
+	if privateKey == "" {
+		privateKey = strings.TrimSpace(os.Getenv("PRIVATE_KEY"))
+	}
+	if strings.HasPrefix(privateKey, "0x") {
+		privateKey = privateKey[2:]
+	}
 
 	endpoint := getEndpoint(*rpcURL)
 	client, err := ethclient.Dial(endpoint)
@@ -48,14 +58,40 @@ func main() {
 			log.Fatalf("query failed: %v", err)
 		}
 	case "send":
-		if *txPrivateKey == "" || *txTo == "" {
+		if privateKey == "" || *txTo == "" {
 			log.Fatal("-private-key and -to are required for send mode")
 		}
-		if err := sendTransaction(client, *txPrivateKey, *txTo, *txAmount); err != nil {
+		if err := sendTransaction(client, privateKey, *txTo, *txAmount); err != nil {
 			log.Fatalf("send transaction failed: %v", err)
 		}
+	case "counter":
+		if privateKey == "" {
+			log.Fatal("-private-key is required for counter mode")
+		}
+		switch strings.ToLower(*counterAction) {
+		case "deploy":
+			if err := deployCounter(client, privateKey); err != nil {
+				log.Fatalf("deploy failed: %v", err)
+			}
+		case "get":
+			if *counterContract == "" {
+				log.Fatal("-contract is required for counter get action")
+			}
+			if err := getCount(client, *counterContract); err != nil {
+				log.Fatalf("get count failed: %v", err)
+			}
+		case "inc":
+			if *counterContract == "" {
+				log.Fatal("-contract is required for counter inc action")
+			}
+			if err := incrementCounter(client, *counterContract, privateKey); err != nil {
+				log.Fatalf("increment failed: %v", err)
+			}
+		default:
+			log.Fatalf("unknown counter action: %s; valid values are deploy, get, inc", *counterAction)
+		}
 	default:
-		log.Fatalf("unknown mode: %s; valid values are query or send", *mode)
+		log.Fatalf("unknown mode: %s; valid values are query, send, or counter", *mode)
 	}
 }
 
